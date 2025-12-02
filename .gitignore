@@ -1,0 +1,12 @@
+/target
+/.cargo
+/.idea
+/.vscode
+
+data/
+aftermath/
+# Buckets that exist during crawling
+data/content.db
+data/url_queue.db
+data/output.jsonl
+*.log

@@ -1,0 +1,66 @@
+use scraper::{Html, Selector};
+use url::Url;
+
+#[derive(Debug, Clone)]
+pub struct ParsedPage {
+    pub title: Option<String>,
+    pub content: String,
+    pub links: Vec<Url>,
+    pub images: Vec<Url>,
+}
+
+pub fn parse_html(document: &str, base_url: &Url) -> ParsedPage {
+    let html = Html::parse_document(document);
+    let title_sel = Selector::parse("title").unwrap();
+    let text_selectors = vec!["article", "h1", "h2", "h3", "h4", "p"];
+    let link_sel = Selector::parse("a[href]").unwrap();
+    let image_sel = Selector::parse("img[src]").unwrap();
+
+    let title = html
+        .select(&title_sel)
+        .next()
+        .and_then(|el| Some(el.text().collect::<Vec<_>>().join(" ").trim().to_string()))
+        .filter(|t| !t.is_empty());
+
+    let mut content_chunks = Vec::new();
+    for selector in text_selectors {
+        if let Ok(sel) = Selector::parse(selector) {
+            for node in html.select(&sel) {
+                let text = node.text().collect::<Vec<_>>().join(" ");
+                let cleaned = text.trim();
+                if !cleaned.is_empty() {
+                    content_chunks.push(cleaned.to_string());
+                }
+            }
+        }
+    }
+
+    let mut links = Vec::new();
+    for el in html.select(&link_sel) {
+        if let Some(href) = el.value().attr("href") {
+            if let Ok(url) = base_url.join(href) {
+                if url.scheme().starts_with("http") {
+                    links.push(url);
+                }
+            }
+        }
+    }
+
+    let mut images = Vec::new();
+    for el in html.select(&image_sel) {
+        if let Some(src) = el.value().attr("src") {
+            if let Ok(url) = base_url.join(src) {
+                if url.scheme().starts_with("http") {
+                    images.push(url);
+                }
+            }
+        }
+    }
+
+    ParsedPage {
+        title,
+        content: content_chunks.join("\n"),
+        links,
+        images,
+    }
+}

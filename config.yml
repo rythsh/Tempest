@@ -1,0 +1,12 @@
+concurrency: 14
+user_agent: "ryth-tempest/0.1 (+https://example.com/bot)"
+data_dir: data
+seeds_file: sites.csv
+aftermath_dir: aftermath
+save_images: true
+image_mime_whitelist:
+  - image/png
+  - image/jpeg
+  - image/jpg
+  - image/gif
+  - image/webp
