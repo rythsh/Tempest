@@ -14,9 +14,10 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex as StdMutex,
         atomic::{AtomicUsize, Ordering},
     },
+    time::SystemTime,
 };
 
 use chrono::{DateTime, Utc};
@@ -24,7 +25,11 @@ use dashmap::DashSet;
 use futures::{StreamExt, stream::FuturesUnordered};
 use serde::Deserialize;
 use serde_json::json;
-use tokio::{signal, sync::Mutex};
+use tokio::{
+    signal,
+    sync::Mutex,
+    time::{Duration, MissedTickBehavior},
+};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 use url::Url;
@@ -348,6 +353,7 @@ struct SeedFile {
     path: PathBuf,
     seen: Arc<DashSet<String>>,
     file: Arc<Mutex<fs::File>>,
+    last_modified: Arc<StdMutex<Option<SystemTime>>>,
 }
 
 impl SeedFile {
@@ -426,10 +432,14 @@ impl SeedFile {
             .append(true)
             .open(&path)?;
 
+        let metadata = fs::metadata(&path)?;
+        let modified = metadata.modified().ok();
+
         Ok(Self {
             path,
             seen: Arc::new(seen),
             file: Arc::new(Mutex::new(file)),
+            last_modified: Arc::new(StdMutex::new(modified)),
         })
     }
 
@@ -472,8 +482,67 @@ impl SeedFile {
         writeln!(file, "{},{},{}", url_string, source.as_str(), timestamp)?;
         file.flush()?;
 
+        if let Ok(metadata) = fs::metadata(&self.path) {
+            if let Ok(modified) = metadata.modified() {
+                let mut guard = self.last_modified.lock().unwrap();
+                *guard = Some(modified);
+            }
+        }
+
         Ok(true)
     }
+
+    pub async fn refresh(&self) -> Result<Vec<Url>, std::io::Error> {
+        let path = self.path.clone();
+        let seen = self.seen.clone();
+        let last_modified = self.last_modified.clone();
+        tokio::task::spawn_blocking(move || refresh_from_disk(path, seen, last_modified))
+            .await
+            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?
+    }
+}
+
+fn refresh_from_disk(
+    path: PathBuf,
+    seen: Arc<DashSet<String>>,
+    last_modified: Arc<StdMutex<Option<SystemTime>>>,
+) -> Result<Vec<Url>, std::io::Error> {
+    let metadata = fs::metadata(&path)?;
+    let modified = metadata.modified().ok();
+
+    {
+        let mut guard = last_modified.lock().unwrap();
+        if guard.as_ref() == modified.as_ref() {
+            return Ok(Vec::new());
+        }
+        *guard = modified.clone();
+    }
+
+    let contents = fs::read_to_string(&path)?;
+    let mut new_urls = Vec::new();
+    for (idx, line) in contents.lines().enumerate() {
+        let mut parts = line.split(',');
+        let url_field = parts.next().unwrap_or("").trim();
+
+        let is_header = idx == 0 && url_field.eq_ignore_ascii_case("url");
+        if is_header {
+            continue;
+        }
+
+        if url_field.is_empty() || url_field.starts_with('#') {
+            continue;
+        }
+
+        if let Ok(parsed) = Url::parse(url_field) {
+            let canonical = canonical_url(&parsed);
+            let canonical_string = canonical.as_str().to_string();
+            if seen.insert(canonical_string.clone()) {
+                new_urls.push(canonical);
+            }
+        }
+    }
+
+    Ok(new_urls)
 }
 
 #[derive(Clone)]
@@ -620,6 +689,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let ai_preferences = config.ai_preferences.clone();
 
     seed_queue(&queue, &seed_file.entries(), &config.default_seeds, &stats)?;
+    let _seed_refresh_handle = tokio::spawn(seed_refresh_loop(
+        seed_file.clone(),
+        queue.clone(),
+        stats.clone(),
+    ));
     info!(
         "starting crawl with {} urls in queue (concurrency={})",
         queue.len(),
@@ -1004,6 +1078,34 @@ fn run_dataset_stats(config: &Config, stats_config: &StatsConfig) -> Result<(), 
     }
 
     Ok(())
+}
+
+async fn seed_refresh_loop(seed_file: Arc<SeedFile>, queue: Arc<UrlQueue>, stats: CrawlStats) {
+    let mut interval = tokio::time::interval(Duration::from_secs(30));
+    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    loop {
+        interval.tick().await;
+
+        match seed_file.refresh().await {
+            Ok(new_urls) if !new_urls.is_empty() => {
+                for url in new_urls {
+                    match queue.enqueue(&url) {
+                        Ok(true) => {
+                            stats.record_enqueue();
+                            stats.record_new_site();
+                            info!("added seed from refreshed {}", url);
+                        }
+                        Ok(false) => {}
+                        Err(err) => error!("failed enqueuing refreshed seed {}: {err}", url),
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(err) => {
+                error!("failed reloading {}: {err}", seed_file.path.display());
+            }
+        }
+    }
 }
 
 fn seed_queue(
