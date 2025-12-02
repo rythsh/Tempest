@@ -1,4 +1,5 @@
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
+use std::collections::HashSet;
 use url::Url;
 
 #[derive(Debug, Clone)]
@@ -6,6 +7,7 @@ pub struct ParsedPage {
     pub title: Option<String>,
     pub content: String,
     pub links: Vec<Url>,
+    pub code_snippets: Vec<String>,
     pub images: Vec<Url>,
 }
 
@@ -15,6 +17,8 @@ pub fn parse_html(document: &str, base_url: &Url) -> ParsedPage {
     let text_selectors = vec!["article", "h1", "h2", "h3", "h4", "p"];
     let link_sel = Selector::parse("a[href]").unwrap();
     let image_sel = Selector::parse("img[src]").unwrap();
+    let pre_sel = Selector::parse("pre").unwrap();
+    let code_sel = Selector::parse("code").unwrap();
 
     let title = html
         .select(&title_sel)
@@ -31,6 +35,23 @@ pub fn parse_html(document: &str, base_url: &Url) -> ParsedPage {
                 if !cleaned.is_empty() {
                     content_chunks.push(cleaned.to_string());
                 }
+            }
+        }
+    }
+
+    let mut code_snippets = Vec::new();
+    let mut seen_snippets = HashSet::new();
+    for el in html.select(&pre_sel) {
+        if let Some(snippet) = extract_clean_text(el) {
+            if seen_snippets.insert(snippet.clone()) {
+                code_snippets.push(snippet);
+            }
+        }
+    }
+    for el in html.select(&code_sel) {
+        if let Some(snippet) = extract_clean_text(el) {
+            if seen_snippets.insert(snippet.clone()) {
+                code_snippets.push(snippet);
             }
         }
     }
@@ -61,6 +82,17 @@ pub fn parse_html(document: &str, base_url: &Url) -> ParsedPage {
         title,
         content: content_chunks.join("\n"),
         links,
+        code_snippets,
         images,
+    }
+}
+
+fn extract_clean_text(node: ElementRef) -> Option<String> {
+    let text = node.text().collect::<Vec<_>>().join(" ");
+    let cleaned = text.trim();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned.to_string())
     }
 }

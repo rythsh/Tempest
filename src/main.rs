@@ -7,7 +7,7 @@ mod robots;
 mod store;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     env,
     error::Error,
     fs,
@@ -362,6 +362,7 @@ struct SeedFile {
     seen: Arc<DashSet<String>>,
     file: Arc<Mutex<fs::File>>,
     last_modified: Arc<StdMutex<Option<SystemTime>>>,
+    io_lock: Arc<Mutex<()>>,
 }
 
 impl SeedFile {
@@ -448,6 +449,7 @@ impl SeedFile {
             seen: Arc::new(seen),
             file: Arc::new(Mutex::new(file)),
             last_modified: Arc::new(StdMutex::new(modified)),
+            io_lock: Arc::new(Mutex::new(())),
         })
     }
 
@@ -486,6 +488,7 @@ impl SeedFile {
 
         let timestamp = Utc::now().to_rfc3339();
 
+        let _io_guard = self.io_lock.lock().await;
         let mut file = self.file.lock().await;
         writeln!(file, "{},{},{}", url_string, source.as_str(), timestamp)?;
         file.flush()?;
@@ -500,13 +503,48 @@ impl SeedFile {
         Ok(true)
     }
 
+    pub async fn remove(&self, url: &Url) -> Result<bool, std::io::Error> {
+        let canonical = canonical_url(url);
+        let canonical_string = canonical.as_str().to_string();
+        let _io_guard = self.io_lock.lock().await;
+
+        let path = self.path.clone();
+        let target = canonical_string.clone();
+        let handler_result =
+            tokio::task::spawn_blocking(move || rewrite_site_without(path, target))
+                .await
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+        let removed = handler_result?;
+
+        if removed {
+            self.seen.remove(&canonical_string);
+            if let Ok(metadata) = fs::metadata(&self.path) {
+                if let Ok(modified) = metadata.modified() {
+                    let mut guard = self.last_modified.lock().unwrap();
+                    *guard = Some(modified);
+                }
+            }
+            let mut file_guard = self.file.lock().await;
+            *file_guard = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)?;
+        }
+
+        Ok(removed)
+    }
+
     pub async fn refresh(&self) -> Result<Vec<Url>, std::io::Error> {
+        let _io_guard = self.io_lock.lock().await;
         let path = self.path.clone();
         let seen = self.seen.clone();
         let last_modified = self.last_modified.clone();
-        tokio::task::spawn_blocking(move || refresh_from_disk(path, seen, last_modified))
-            .await
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?
+        let result =
+            tokio::task::spawn_blocking(move || refresh_from_disk(path, seen, last_modified))
+                .await
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+        drop(_io_guard);
+        result
     }
 }
 
@@ -528,6 +566,7 @@ fn refresh_from_disk(
 
     let contents = fs::read_to_string(&path)?;
     let mut new_urls = Vec::new();
+    let mut file_urls = HashSet::new();
     for (idx, line) in contents.lines().enumerate() {
         let mut parts = line.split(',');
         let url_field = parts.next().unwrap_or("").trim();
@@ -544,13 +583,70 @@ fn refresh_from_disk(
         if let Ok(parsed) = Url::parse(url_field) {
             let canonical = canonical_url(&parsed);
             let canonical_string = canonical.as_str().to_string();
+            file_urls.insert(canonical_string.clone());
             if seen.insert(canonical_string.clone()) {
                 new_urls.push(canonical);
             }
         }
     }
 
+    let mut to_remove = Vec::new();
+    for entry in seen.iter() {
+        let entry_str = entry.clone();
+        if !file_urls.contains(&entry_str) {
+            to_remove.push(entry_str);
+        }
+    }
+    for entry in to_remove {
+        seen.remove(&entry);
+    }
+
     Ok(new_urls)
+}
+
+fn rewrite_site_without(path: PathBuf, target: String) -> Result<bool, std::io::Error> {
+    let contents = fs::read_to_string(&path)?;
+    let mut cleaned_lines = Vec::new();
+    let mut removed = false;
+
+    for (idx, line) in contents.lines().enumerate() {
+        let mut parts = line.split(',');
+        let url_field = parts.next().unwrap_or("").trim();
+
+        let is_header = idx == 0 && url_field.eq_ignore_ascii_case("url");
+        if is_header {
+            cleaned_lines.push(line.to_string());
+            continue;
+        }
+
+        if url_field.is_empty() || url_field.starts_with('#') {
+            cleaned_lines.push(line.to_string());
+            continue;
+        }
+
+        if let Ok(parsed) = Url::parse(url_field) {
+            let canonical = canonical_url(&parsed);
+            if canonical.as_str() == target {
+                removed = true;
+                continue;
+            }
+        }
+
+        cleaned_lines.push(line.to_string());
+    }
+
+    if removed {
+        let reconstructed = if cleaned_lines.is_empty() {
+            String::new()
+        } else {
+            let mut joined = cleaned_lines.join("\n");
+            joined.push('\n');
+            joined
+        };
+        fs::write(path, reconstructed)?;
+    }
+
+    Ok(removed)
 }
 
 #[derive(Clone)]
@@ -828,7 +924,14 @@ async fn crawl(
                 }
                 Ok((url, Err(err), _, stats_handle)) => {
                     stats_handle.record_failed();
-                    error!("error processing {}: {err}", url)
+                    error!("error processing {}: {err}", url);
+                    match seed_file.remove(&url).await {
+                        Ok(true) => info!("dropped {} from seeds after repeated crawl error", url),
+                        Ok(false) => {}
+                        Err(remove_err) => {
+                            error!("failed removing {} from seeds.csv: {remove_err}", url)
+                        }
+                    }
                 }
                 Err(join_err) => error!("task join error: {join_err}"),
             }
@@ -969,6 +1072,7 @@ async fn handle_url(
         word_count,
         parsed.links.len(),
         matches_keywords,
+        parsed.code_snippets.clone(),
     );
     let stored = store.write_record(&record).await?;
     stats.record_store(stored);

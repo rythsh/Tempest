@@ -28,4 +28,5 @@ Remove or edit `sites.csv` before running if you want to reset the seed list.
 - `image_mime_whitelist` lets you limit saved files to particular MIME types by default (`image/png`, `image/jpeg`, `image/jpg`, `image/gif`, `image/webp`).
 - `default_seeds` carries the initial list of seed URLs whenever the `sites.csv` file is empty, and can be adjusted alongside the rest of the configuration.
 - `bypass_robots` is `false` by default; setting it to `true` lets the crawler ignore `robots.txt` (discouraged but available for datasets where crawling restrictions are intentionally relaxed).
+- `sites.csv` is watched while the crawler runs—new entries get picked up automatically, and any (re-)crawled host that repeatedly errors is dropped from the list.
 - Use `cargo run -- --stats` to print dataset metadata (languages, word count, size, record count); every stat toggled in the `stats` section of `config.yml` can be turned on/off or pointed at a different JSONL file.
