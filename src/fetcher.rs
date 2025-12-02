@@ -43,7 +43,7 @@ impl Fetcher {
         let client = Client::builder()
             .user_agent(DEFAULT_USER_AGENTS[0])
             .redirect(reqwest::redirect::Policy::limited(10))
-            .timeout(Duration::from_secs(10))
+             .timeout(Duration::from_secs(20))
             .tcp_nodelay(true)
             .tcp_keepalive(Duration::from_secs(30))
             .pool_max_idle_per_host(8)
@@ -57,7 +57,7 @@ impl Fetcher {
                     .map(|ua| ua.to_string())
                     .collect()
             }),
-            max_retries: 2,
+            max_retries: 4,
             base_backoff: Duration::from_millis(100),
         })
     }
@@ -70,7 +70,10 @@ impl Fetcher {
             let resp = self
                 .client
                 .get(url.clone())
-                .header(header::USER_AGENT, user_agent)
+                    .header(header::USER_AGENT, user_agent)
+                .header(header::ACCEPT, "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .header(header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
+                .header(header::ACCEPT_ENCODING, "gzip, deflate, br")
                 .send()
                 .await;
 

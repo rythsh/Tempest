@@ -48,8 +48,18 @@ impl UrlQueue {
         })
     }
 
-    pub fn enqueue(&self, url: &Url) -> Result<bool, QueueError> {
-        let url_string = url.as_str().to_string();
+     pub fn enqueue(&self, url: &Url) -> Result<bool, QueueError> {
+        if url.scheme() != "http" && url.scheme() != "https" {
+            return Ok(false);
+        }
+
+        if url.host_str().is_none() {
+            return Ok(false);
+        }
+
+         let mut url_clone = url.clone();
+        url_clone.set_fragment(None);
+        let url_string = url_clone.as_str().to_string();
         if !self.in_memory_seen.insert(url_string.clone()) {
             return Ok(false);
         }

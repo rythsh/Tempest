@@ -45,10 +45,14 @@ pub struct RobotsManager {
 }
 
 impl RobotsManager {
-    pub fn new() -> Self {
-        Self {
+     pub fn new() -> Self {
+        Self::with_ttl(Duration::from_secs(60 * 60))
+    }
+
+    pub fn with_ttl(ttl: Duration) -> Self {
+         Self {
             cache: Arc::new(DashMap::new()),
-            ttl: Duration::from_secs(60 * 60), // refresh hourly
+            ttl,
         }
     }
 

@@ -1,9 +1,9 @@
 data_dir: data
-aftermath_dir: aftermath
+after_math_dir: aftermath
 seeds_file: sites.csv
-concurrency: 14
-user_agent: "ryth-tempest/0.1"
-save_images: true
+concurrency: 32
+user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+save_images: false
 image_mime_whitelist:
   - image/png
   - image/jpeg
@@ -12,53 +12,49 @@ image_mime_whitelist:
   - image/webp
 bypass_robots: false
 ai_preferences:
-  min_word_count: 250
+  min_word_count: 400
   filter_english: true
-  min_language_confidence: 0.75
-  focus_keywords:
-    - code
-    - coding
-    - developer
-    - api
-    - sdk
-    - python
-    - rust
-    - security
-    - malware
-    - vulnerability
-    - exploit
-    - threat
-    - cybersecurity
-    - analysis
-    - incident
-    - response
-  min_keyword_matches: 1
-  require_keyword_match: true
+  min_language_confidence: 0.85
+  focus_keywords: []
+  min_keyword_matches: 0
+  require_keyword_match: false
 default_seeds:
-  - https://www.rust-lang.org/learn
   - https://docs.python.org/3/
-  - https://developer.mozilla.org/en-US/
-  - https://www.freecodecamp.org/news/
-  - https://www.geeksforgeeks.org/
-  - https://stackoverflow.com/
-  - https://github.com/trending
-  - https://www.kaggle.com/learn
-  - https://www.kaggle.com/datasets
-  - https://www.cisa.gov/news-events
-  - https://www.cisa.gov/known-exploited-vulnerabilities
-  - https://www.us-cert.gov/ncas
-  - https://threatpost.com/
-  - https://www.malwarebytes.com/blog/
-  - https://www.crowdstrike.com/blog/
-  - https://blog.cloudflare.com/security
-  - https://www.fireeye.com/blog.html
-  - https://www.darkreading.com/vulnerabilities-threats
-  - https://blog.talosintelligence.com/
-  - https://www.microsoft.com/security/blog/
-  - https://www.sans.org/blog/
-  - https://archive.org/details/texts
-  - https://www.gutenberg.org/
-  - https://www.data.gov/
+  - https://doc.rust-lang.org/book/
+  - https://developer.mozilla.org/en-US/docs/Web
+  - https://pytorch.org/docs/stable/index.html
+  - https://www.tensorflow.org/api_docs
+  - https://numpy.org/doc/stable/
+  - https://pandas.pydata.org/docs/
+  - https://scikit-learn.org/stable/
+  - https://kubernetes.io/docs/home/
+  - https://docs.docker.com/
+  - https://pkg.go.dev/std
+  - https://docs.oracle.com/javase/8/docs/api/
+  - https://learn.microsoft.com/en-us/dotnet/api/
+  - https://developer.apple.com/documentation
+  - https://learn.microsoft.com/en-us/azure/
+  - https://cloud.google.com/docs
+  - https://aws.amazon.com/documentation-overview/
+  - https://www.postgresql.org/docs/current/
+  - https://dev.mysql.com/doc/
+  - https://redis.io/docs/latest/
+  - https://www.mongodb.com/docs/
+  - https://clickhouse.com/docs
+  - https://nginx.org/en/docs/
+  - https://httpd.apache.org/docs/
+  - https://datatracker.ietf.org/doc/html/
+  - https://www.rfc-editor.org/rfc-index.html
+  - https://www.caida.org/catalog/datasets/
+  - https://bgpstream.caida.org/
+  - https://www.routeviews.org/routeviews/
+  - https://www.ripe.net/analyse/internet-measurements
+  - https://measurementlab.net/data/
+  - https://portal.nersc.gov/project/m888/datasets.html
+  - https://snap.stanford.edu/data/
+  - https://commoncrawl.org/the-data/
+  - https://opendata.ripe.net/
+  - https://opendata.cloud.google.com/measurement-lab
 stats:
   enabled: true
   dataset_file: data/output.jsonl
