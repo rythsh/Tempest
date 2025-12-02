@@ -1,8 +1,8 @@
-concurrency: 14
-user_agent: "ryth-tempest/0.1 (+https://example.com/bot)"
 data_dir: data
-seeds_file: sites.csv
 aftermath_dir: aftermath
+seeds_file: sites.csv
+concurrency: 14
+user_agent: "ryth-tempest/0.1"
 save_images: true
 image_mime_whitelist:
   - image/png
@@ -10,3 +10,59 @@ image_mime_whitelist:
   - image/jpg
   - image/gif
   - image/webp
+ai_preferences:
+  min_word_count: 250
+  filter_english: true
+  min_language_confidence: 0.75
+  focus_keywords:
+    - code
+    - coding
+    - developer
+    - api
+    - sdk
+    - python
+    - rust
+    - security
+    - malware
+    - vulnerability
+    - exploit
+    - threat
+    - cybersecurity
+    - analysis
+    - incident
+    - response
+  min_keyword_matches: 1
+  require_keyword_match: true
+default_seeds:
+  - https://www.rust-lang.org/learn
+  - https://docs.python.org/3/
+  - https://developer.mozilla.org/en-US/
+  - https://www.freecodecamp.org/news/
+  - https://www.geeksforgeeks.org/
+  - https://stackoverflow.com/
+  - https://github.com/trending
+  - https://www.kaggle.com/learn
+  - https://www.kaggle.com/datasets
+  - https://www.cisa.gov/news-events
+  - https://www.cisa.gov/known-exploited-vulnerabilities
+  - https://www.us-cert.gov/ncas
+  - https://threatpost.com/
+  - https://www.malwarebytes.com/blog/
+  - https://www.crowdstrike.com/blog/
+  - https://blog.cloudflare.com/security
+  - https://www.fireeye.com/blog.html
+  - https://www.darkreading.com/vulnerabilities-threats
+  - https://blog.talosintelligence.com/
+  - https://www.microsoft.com/security/blog/
+  - https://www.sans.org/blog/
+  - https://archive.org/details/texts
+  - https://www.gutenberg.org/
+  - https://www.data.gov/
+stats:
+  enabled: true
+  dataset_file: data/output.jsonl
+  languages: true
+  word_count: true
+  dataset_size: true
+  record_count: true
+  language_confidence: 0.6

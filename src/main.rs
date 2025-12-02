@@ -7,10 +7,11 @@ mod robots;
 mod store;
 
 use std::{
+    collections::BTreeMap,
     env,
     error::Error,
     fs,
-    io::Write,
+    io::{BufRead, BufReader, Write},
     path::PathBuf,
     sync::{
         Arc,
@@ -27,6 +28,7 @@ use tokio::{signal, sync::Mutex};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 use url::Url;
+use whatlang::{Lang, detect};
 
 use cleaner::{clean_text, normalize_url};
 use fetcher::{FetchError, Fetcher};
@@ -34,7 +36,7 @@ use images::ImageStore;
 use parser::parse_html;
 use queue::{QueueError, UrlQueue};
 use robots::{RobotsError, RobotsManager};
-use store::{DataStore, StoreError, build_record};
+use store::{DataStore, PageRecord, StoreError, build_record};
 
 const DEFAULT_USER_AGENT: &str = "ryth-tempest/0.1";
 const DEFAULT_CONCURRENCY: usize = 128;
@@ -45,6 +47,35 @@ const DEFAULT_SEEDS: &[&str] = &[
     "https://en.wikipedia.org/wiki/Rust_(programming_language)",
     "https://news.ycombinator.com/",
 ];
+const DEFAULT_MIN_WORD_COUNT: usize = 250;
+const DEFAULT_LANGUAGE_CONFIDENCE: f64 = 0.75;
+const DEFAULT_FILTER_ENGLISH: bool = true;
+const DEFAULT_FOCUS_KEYWORDS: &[&str] = &[
+    "code",
+    "coding",
+    "developer",
+    "api",
+    "sdk",
+    "python",
+    "rust",
+    "security",
+    "malware",
+    "vulnerability",
+    "exploit",
+    "threat",
+    "cybersecurity",
+    "analysis",
+    "incident",
+    "response",
+];
+const DEFAULT_MIN_KEYWORD_MATCHES: usize = 1;
+const DEFAULT_REQUIRE_KEYWORD_MATCH: bool = true;
+const DEFAULT_STATS_ENABLED: bool = true;
+const DEFAULT_REPORT_LANGUAGES: bool = true;
+const DEFAULT_REPORT_WORD_COUNT: bool = true;
+const DEFAULT_REPORT_DATASET_SIZE: bool = true;
+const DEFAULT_REPORT_RECORD_COUNT: bool = true;
+const DEFAULT_STATS_LANGUAGE_CONFIDENCE: f64 = 0.5;
 
 #[derive(thiserror::Error, Debug)]
 enum CrawlerError {
@@ -74,6 +105,12 @@ struct Config {
     save_images: bool,
     #[serde(default = "default_image_mime_whitelist")]
     image_mime_whitelist: Vec<String>,
+    #[serde(default)]
+    ai_preferences: AiPreferences,
+    #[serde(default = "default_seed_list")]
+    default_seeds: Vec<String>,
+    #[serde(default)]
+    stats: StatsConfig,
 }
 
 impl Default for Config {
@@ -86,6 +123,9 @@ impl Default for Config {
             user_agent: default_user_agent(),
             save_images: default_save_images(),
             image_mime_whitelist: default_image_mime_whitelist(),
+            ai_preferences: AiPreferences::default(),
+            default_seeds: default_seed_list(),
+            stats: StatsConfig::default(),
         }
     }
 }
@@ -124,6 +164,185 @@ fn default_image_mime_whitelist() -> Vec<String> {
     ]
 }
 
+fn default_seed_list() -> Vec<String> {
+    DEFAULT_SEEDS.iter().map(|seed| seed.to_string()).collect()
+}
+
+fn default_min_word_count() -> usize {
+    DEFAULT_MIN_WORD_COUNT
+}
+
+fn default_filter_english() -> bool {
+    DEFAULT_FILTER_ENGLISH
+}
+
+fn default_language_confidence() -> f64 {
+    DEFAULT_LANGUAGE_CONFIDENCE
+}
+
+fn default_focus_keywords() -> Vec<String> {
+    DEFAULT_FOCUS_KEYWORDS
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn default_min_keyword_matches() -> usize {
+    DEFAULT_MIN_KEYWORD_MATCHES
+}
+
+fn default_require_keyword_match() -> bool {
+    DEFAULT_REQUIRE_KEYWORD_MATCH
+}
+
+fn default_stats_enabled() -> bool {
+    DEFAULT_STATS_ENABLED
+}
+
+fn default_report_languages() -> bool {
+    DEFAULT_REPORT_LANGUAGES
+}
+
+fn default_report_word_count() -> bool {
+    DEFAULT_REPORT_WORD_COUNT
+}
+
+fn default_report_dataset_size() -> bool {
+    DEFAULT_REPORT_DATASET_SIZE
+}
+
+fn default_report_record_count() -> bool {
+    DEFAULT_REPORT_RECORD_COUNT
+}
+
+fn default_stats_language_confidence() -> f64 {
+    DEFAULT_STATS_LANGUAGE_CONFIDENCE
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StatsConfig {
+    #[serde(default = "default_stats_enabled")]
+    enabled: bool,
+    #[serde(default)]
+    dataset_file: Option<PathBuf>,
+    #[serde(default = "default_report_languages")]
+    languages: bool,
+    #[serde(default = "default_report_word_count")]
+    word_count: bool,
+    #[serde(default = "default_report_dataset_size")]
+    dataset_size: bool,
+    #[serde(default = "default_report_record_count")]
+    record_count: bool,
+    #[serde(default = "default_stats_language_confidence")]
+    language_confidence: f64,
+}
+
+impl Default for StatsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_stats_enabled(),
+            dataset_file: None,
+            languages: default_report_languages(),
+            word_count: default_report_word_count(),
+            dataset_size: default_report_dataset_size(),
+            record_count: default_report_record_count(),
+            language_confidence: default_stats_language_confidence(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CliOptions {
+    config_path: Option<PathBuf>,
+    concurrency_override: Option<usize>,
+    seeds_override: Option<PathBuf>,
+    stats_mode: bool,
+}
+
+fn parse_cli_options() -> CliOptions {
+    let mut args = env::args().skip(1).peekable();
+    let mut opts = CliOptions {
+        config_path: None,
+        concurrency_override: None,
+        seeds_override: None,
+        stats_mode: false,
+    };
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--config" => {
+                if let Some(path) = args.next() {
+                    opts.config_path = Some(PathBuf::from(path));
+                }
+            }
+            "--concurrency" => {
+                if let Some(val) = args.next() {
+                    opts.concurrency_override = val.parse::<usize>().ok();
+                }
+            }
+            "--seeds-file" => {
+                if let Some(path) = args.next() {
+                    opts.seeds_override = Some(PathBuf::from(path));
+                }
+            }
+            "--stats" => {
+                opts.stats_mode = true;
+            }
+            _ => {}
+        }
+    }
+
+    opts
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AiPreferences {
+    #[serde(default = "default_min_word_count")]
+    min_word_count: usize,
+    #[serde(default = "default_filter_english")]
+    filter_english: bool,
+    #[serde(default = "default_language_confidence")]
+    min_language_confidence: f64,
+    #[serde(default = "default_focus_keywords")]
+    focus_keywords: Vec<String>,
+    #[serde(default = "default_min_keyword_matches")]
+    min_keyword_matches: usize,
+    #[serde(default = "default_require_keyword_match")]
+    require_keyword_match: bool,
+}
+
+impl Default for AiPreferences {
+    fn default() -> Self {
+        Self {
+            min_word_count: default_min_word_count(),
+            filter_english: default_filter_english(),
+            min_language_confidence: default_language_confidence(),
+            focus_keywords: default_focus_keywords(),
+            min_keyword_matches: default_min_keyword_matches(),
+            require_keyword_match: default_require_keyword_match(),
+        }
+    }
+}
+
+impl AiPreferences {
+    fn matches_focus_keywords(&self, text: &str) -> bool {
+        if self.focus_keywords.is_empty() {
+            return true;
+        }
+        let lower = text.to_lowercase();
+        let matches = self
+            .focus_keywords
+            .iter()
+            .filter(|kw| lower.contains(&kw.to_lowercase()))
+            .count();
+        matches >= self.min_keyword_matches
+    }
+}
+
+fn canonical_url(url: &Url) -> Url {
+    normalize_url(url).unwrap_or_else(|| url.clone())
+}
+
 #[derive(Clone)]
 struct SeedFile {
     path: PathBuf,
@@ -146,18 +365,47 @@ impl SeedFile {
         let mut cleaned_lines: Vec<String> = Vec::new();
 
         for (idx, line) in contents.lines().enumerate() {
-            let url = line.split(',').next().unwrap_or("").trim();
+            let mut parts = line.split(',');
+            let url_field = parts.next().unwrap_or("").trim();
 
-            let is_header = idx == 0 && url.eq_ignore_ascii_case("url");
-            if url.is_empty() || url.starts_with('#') || is_header {
-                if is_header {
-                    cleaned_lines.push(line.to_string());
-                }
+            let is_header = idx == 0 && url_field.eq_ignore_ascii_case("url");
+            if is_header {
+                cleaned_lines.push(line.to_string());
                 continue;
             }
 
-            if seen.insert(url.to_string()) {
+            if url_field.is_empty() {
+                continue;
+            }
+
+            if url_field.starts_with('#') {
                 cleaned_lines.push(line.to_string());
+                continue;
+            }
+
+            let source = parts
+                .next()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("manual");
+            let discovered = parts
+                .next()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("bootstrap");
+
+            match Url::parse(url_field) {
+                Ok(parsed) => {
+                    let canonical = canonical_url(&parsed);
+                    let canonical_string = canonical.as_str().to_string();
+                    if seen.insert(canonical_string.clone()) {
+                        cleaned_lines
+                            .push(format!("{},{},{}", canonical_string, source, discovered));
+                    }
+                }
+                Err(_) => {
+                    cleaned_lines.push(line.to_string());
+                }
             }
         }
 
@@ -197,7 +445,7 @@ impl SeedFile {
         self.seen.is_empty()
     }
 
-    pub async fn ensure_defaults(&self, defaults: &[&str]) -> Result<(), std::io::Error> {
+    pub async fn ensure_defaults(&self, defaults: &[String]) -> Result<(), std::io::Error> {
         if !self.is_empty() {
             return Ok(());
         }
@@ -212,7 +460,8 @@ impl SeedFile {
     }
 
     pub async fn record(&self, url: &Url, source: &Url) -> Result<bool, std::io::Error> {
-        let url_string = url.as_str().to_string();
+        let canonical = canonical_url(url);
+        let url_string = canonical.as_str().to_string();
         if !self.seen.insert(url_string.clone()) {
             return Ok(false);
         }
@@ -319,48 +568,14 @@ struct StatsSnapshot {
     recent_urls: Vec<String>,
 }
 
-fn load_config() -> Result<Config, Box<dyn Error>> {
-    let mut args = env::args().skip(1).peekable();
-    let mut config_path: Option<PathBuf> = None;
-    let mut concurrency_override: Option<usize> = None;
-    let mut seeds_override: Option<PathBuf> = None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--config" => {
-                if let Some(path) = args.next() {
-                    config_path = Some(PathBuf::from(path));
-                }
-            }
-            "--concurrency" => {
-                if let Some(val) = args.next() {
-                    concurrency_override = val.parse::<usize>().ok();
-                }
-            }
-            "--seeds-file" => {
-                if let Some(path) = args.next() {
-                    seeds_override = Some(PathBuf::from(path));
-                }
-            }
-            _ => {}
-        }
-    }
-
+fn load_config(config_path: Option<PathBuf>) -> Result<Config, Box<dyn Error>> {
     let resolved_path = config_path.unwrap_or_else(|| PathBuf::from("config.yml"));
-    let mut config = if resolved_path.exists() {
+    let config = if resolved_path.exists() {
         let contents = fs::read_to_string(&resolved_path)?;
         serde_yaml::from_str::<Config>(&contents)?
     } else {
         Config::default()
     };
-
-    if let Some(concurrency) = concurrency_override {
-        config.concurrency = concurrency;
-    }
-
-    if let Some(seeds_file) = seeds_override {
-        config.seeds_file = seeds_file;
-    }
 
     Ok(config)
 }
@@ -369,12 +584,25 @@ fn load_config() -> Result<Config, Box<dyn Error>> {
 async fn main() -> Result<(), Box<dyn Error>> {
     init_tracing();
 
-    let config = load_config()?;
+    let cli_options = parse_cli_options();
+    let mut config = load_config(cli_options.config_path.clone())?;
+    if let Some(concurrency) = cli_options.concurrency_override {
+        config.concurrency = concurrency;
+    }
+    if let Some(seeds_file) = cli_options.seeds_override {
+        config.seeds_file = seeds_file;
+    }
+
+    if cli_options.stats_mode {
+        run_dataset_stats(&config, &config.stats)?;
+        return Ok(());
+    }
+
     fs::create_dir_all(&config.data_dir)?;
     fs::create_dir_all(&config.aftermath_dir)?;
 
     let seed_file = Arc::new(SeedFile::open(config.seeds_file.clone())?);
-    seed_file.ensure_defaults(DEFAULT_SEEDS).await?;
+    seed_file.ensure_defaults(&config.default_seeds).await?;
 
     let queue = Arc::new(UrlQueue::open(config.data_dir.join("url_queue.db"))?);
     let store = DataStore::open(&config.data_dir)?;
@@ -389,8 +617,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let fetcher = Arc::new(Fetcher::new(Some(vec![config.user_agent.clone()]))?);
     let robots = RobotsManager::new();
     let stats = CrawlStats::new();
+    let ai_preferences = config.ai_preferences.clone();
 
-    seed_queue(&queue, &seed_file.entries(), &stats)?;
+    seed_queue(&queue, &seed_file.entries(), &config.default_seeds, &stats)?;
     info!(
         "starting crawl with {} urls in queue (concurrency={})",
         queue.len(),
@@ -408,6 +637,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             config.concurrency,
             config.user_agent.clone(),
             image_store.clone(),
+            ai_preferences.clone(),
         ) => {
             if let Err(err) = res {
                 error!("crawl error: {err}");
@@ -438,6 +668,7 @@ async fn crawl(
     concurrency: usize,
     user_agent: String,
     image_store: Option<Arc<ImageStore>>,
+    ai_preferences: AiPreferences,
 ) -> Result<(), CrawlerError> {
     let mut in_flight: FuturesUnordered<_> = FuturesUnordered::new();
 
@@ -452,6 +683,7 @@ async fn crawl(
                     let stats_clone = stats.clone();
                     let user_agent_clone = user_agent.clone();
                     let image_store_clone = image_store.clone();
+                    let ai_preferences_clone = ai_preferences.clone();
                     in_flight.push(tokio::spawn(async move {
                         let links = handle_url(
                             url.clone(),
@@ -461,6 +693,7 @@ async fn crawl(
                             stats_clone.clone(),
                             image_store_clone,
                             &user_agent_clone,
+                            ai_preferences_clone,
                         )
                         .await;
                         (url, links, queue_clone, stats_clone)
@@ -528,6 +761,7 @@ async fn handle_url(
     stats: CrawlStats,
     image_store: Option<Arc<ImageStore>>,
     user_agent: &str,
+    ai_preferences: AiPreferences,
 ) -> Result<HandleOutcome, CrawlerError> {
     if !robots.allows(fetcher.as_ref(), &url, user_agent).await? {
         info!("robots disallow {}", url);
@@ -560,23 +794,21 @@ async fn handle_url(
     };
     stats.record_fetch();
     stats.push_recent(&response.final_url).await;
+    let final_url = response.final_url.clone();
     if let Some(ct) = response.content_type.as_deref() {
         if !ct.contains("text/html") && !ct.contains("text/plain") {
-            info!(
-                "skipping non-html content-type {} for {}",
-                ct, response.final_url
-            );
+            info!("skipping non-html content-type {} for {}", ct, final_url);
             return Ok(HandleOutcome {
                 links: Vec::new(),
                 stored: false,
-                final_url: response.final_url,
+                final_url: final_url.clone(),
             });
         }
     }
     let fetched_at = Utc::now();
     let body = String::from_utf8_lossy(&response.body).to_string();
     let content_length = response.body.len();
-    let parsed = parse_html(&body, &response.final_url);
+    let parsed = parse_html(&body, &final_url);
     if let Some(store) = image_store {
         for image_url in parsed.images.iter() {
             if let Err(err) = store.save_image(fetcher.as_ref(), image_url).await {
@@ -590,14 +822,51 @@ async fn handle_url(
         return Ok(HandleOutcome {
             links: Vec::new(),
             stored: false,
-            final_url: response.final_url,
+            final_url: final_url.clone(),
         });
     }
 
     let word_count = cleaned.split_whitespace().count();
+    if word_count < ai_preferences.min_word_count {
+        return Ok(HandleOutcome {
+            links: Vec::new(),
+            stored: false,
+            final_url: final_url.clone(),
+        });
+    }
+
+    if ai_preferences.filter_english {
+        match detect(&cleaned) {
+            Some(info)
+                if info.lang() == Lang::Eng
+                    && info.confidence() >= ai_preferences.min_language_confidence =>
+            {
+                // acceptable English text
+            }
+            _ => {
+                return Ok(HandleOutcome {
+                    links: Vec::new(),
+                    stored: false,
+                    final_url: final_url.clone(),
+                });
+            }
+        }
+    }
+
+    if ai_preferences.require_keyword_match && !ai_preferences.matches_focus_keywords(&cleaned) {
+        info!(
+            "skipping {} because it lacks required AI training keywords",
+            final_url
+        );
+        return Ok(HandleOutcome {
+            links: Vec::new(),
+            stored: false,
+            final_url: final_url.clone(),
+        });
+    }
     let record = build_record(
         &url,
-        &response.final_url,
+        &final_url,
         parsed.title.clone(),
         cleaned,
         response.status.as_u16(),
@@ -613,7 +882,7 @@ async fn handle_url(
     Ok(HandleOutcome {
         links: parsed.links,
         stored,
-        final_url: response.final_url,
+        final_url,
     })
 }
 
@@ -658,16 +927,95 @@ async fn write_aftermath(
     Ok(())
 }
 
-fn seed_queue(queue: &UrlQueue, seeds: &[String], stats: &CrawlStats) -> Result<(), QueueError> {
+fn run_dataset_stats(config: &Config, stats_config: &StatsConfig) -> Result<(), Box<dyn Error>> {
+    if !stats_config.enabled {
+        println!("Dataset stats reporting disabled in config");
+        return Ok(());
+    }
+
+    let dataset_path = stats_config
+        .dataset_file
+        .clone()
+        .unwrap_or_else(|| config.data_dir.join("output.jsonl"));
+
+    if !dataset_path.exists() {
+        return Err(format!("dataset file {} not found", dataset_path.display()).into());
+    }
+
+    let file = fs::File::open(&dataset_path)?;
+    let reader = BufReader::new(file);
+
+    let mut record_count = 0usize;
+    let mut total_words = 0usize;
+    let mut languages: BTreeMap<String, usize> = BTreeMap::new();
+
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let record: PageRecord = serde_json::from_str(&line)?;
+        record_count += 1;
+        if stats_config.word_count {
+            total_words += record.word_count;
+        }
+        if stats_config.languages {
+            let lang_key = match detect(&record.content) {
+                Some(info) if info.confidence() >= stats_config.language_confidence => {
+                    info.lang().code().to_string()
+                }
+                Some(info) => format!("{}_low_conf", info.lang().code()),
+                None => "unknown".to_string(),
+            };
+            *languages.entry(lang_key).or_insert(0) += 1;
+        }
+    }
+
+    let metadata = fs::metadata(&dataset_path)?;
+    let size_bytes = metadata.len();
+    let size_gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+
+    println!("Dataset stats for {}", dataset_path.display());
+    if stats_config.record_count {
+        println!("Records: {}", record_count);
+    }
+    if stats_config.word_count {
+        println!("Total words: {}", total_words);
+    }
+    if stats_config.dataset_size {
+        println!("Dataset size: {:.4} GB ({size_bytes} bytes)", size_gb);
+    }
+    if stats_config.languages {
+        println!(
+            "Languages (counted when confidence >= {:.2}):",
+            stats_config.language_confidence
+        );
+        let mut sorted_langs: Vec<_> = languages.into_iter().collect();
+        sorted_langs.sort_by(|a, b| b.1.cmp(&a.1));
+        if sorted_langs.is_empty() {
+            println!("  none detected");
+        } else {
+            for (lang, count) in sorted_langs {
+                println!("  {lang}: {count}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn seed_queue(
+    queue: &UrlQueue,
+    seeds: &[String],
+    defaults: &[String],
+    stats: &CrawlStats,
+) -> Result<(), QueueError> {
     if queue.len() > 0 {
         return Ok(());
     }
 
-    let seeds_iter: Vec<String> = if seeds.is_empty() {
-        DEFAULT_SEEDS
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
+    let seeds_iter: Vec<String> = if seeds.is_empty() && !defaults.is_empty() {
+        defaults.to_vec()
     } else {
         seeds.to_vec()
     };

@@ -7,7 +7,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use dashmap::DashSet;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sled::{self, IVec};
 use thiserror::Error;
@@ -24,7 +24,7 @@ pub enum StoreError {
     Serialization(#[from] serde_json::Error),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PageRecord {
     pub requested_url: String,
     pub final_url: String,
