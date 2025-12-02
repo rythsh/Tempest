@@ -47,9 +47,9 @@ const DEFAULT_SEEDS: &[&str] = &[
     "https://en.wikipedia.org/wiki/Rust_(programming_language)",
     "https://news.ycombinator.com/",
 ];
-const DEFAULT_MIN_WORD_COUNT: usize = 250;
+const DEFAULT_MIN_WORD_COUNT: usize = 0;
 const DEFAULT_LANGUAGE_CONFIDENCE: f64 = 0.75;
-const DEFAULT_FILTER_ENGLISH: bool = true;
+const DEFAULT_FILTER_ENGLISH: bool = false;
 const DEFAULT_FOCUS_KEYWORDS: &[&str] = &[
     "code",
     "coding",
@@ -69,7 +69,7 @@ const DEFAULT_FOCUS_KEYWORDS: &[&str] = &[
     "response",
 ];
 const DEFAULT_MIN_KEYWORD_MATCHES: usize = 1;
-const DEFAULT_REQUIRE_KEYWORD_MATCH: bool = true;
+const DEFAULT_REQUIRE_KEYWORD_MATCH: bool = false;
 const DEFAULT_STATS_ENABLED: bool = true;
 const DEFAULT_REPORT_LANGUAGES: bool = true;
 const DEFAULT_REPORT_WORD_COUNT: bool = true;
@@ -853,13 +853,14 @@ async fn handle_url(
         }
     }
 
-    if ai_preferences.require_keyword_match && !ai_preferences.matches_focus_keywords(&cleaned) {
+    let matches_keywords = ai_preferences.matches_focus_keywords(&cleaned);
+    if ai_preferences.require_keyword_match && !matches_keywords {
         info!(
-            "skipping {} because it lacks required AI training keywords",
+            "skipping {} because it lacks required AI training keywords (still exploring links)",
             final_url
         );
         return Ok(HandleOutcome {
-            links: Vec::new(),
+            links: parsed.links,
             stored: false,
             final_url: final_url.clone(),
         });
@@ -875,6 +876,7 @@ async fn handle_url(
         content_length,
         word_count,
         parsed.links.len(),
+        matches_keywords,
     );
     let stored = store.write_record(&record).await?;
     stats.record_store(stored);

@@ -34,6 +34,7 @@ pub struct PageRecord {
     pub word_count: usize,
     pub status: u16,
     pub content_type: Option<String>,
+    pub matches_keywords: bool,
     pub fetched_at: DateTime<Utc>,
     pub outbound_links: usize,
 }
@@ -129,6 +130,7 @@ pub fn build_record(
     content_length: usize,
     word_count: usize,
     outbound_links: usize,
+    matches_keywords: bool,
 ) -> PageRecord {
     PageRecord {
         requested_url: requested_url.to_string(),
@@ -139,6 +141,7 @@ pub fn build_record(
         word_count,
         status,
         content_type,
+        matches_keywords,
         fetched_at,
         outbound_links,
     }
