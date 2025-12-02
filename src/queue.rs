@@ -4,6 +4,7 @@ use dashmap::DashSet;
 use sled::{self, IVec};
 use thiserror::Error;
 use url::Url;
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Error)]
 pub enum QueueError {
@@ -24,6 +25,8 @@ pub struct UrlQueue {
     seen: sled::Tree,
     in_memory_seen: DashSet<String>,
 }
+
+const MIN_REVISIT_INTERVAL_SECS: u64 = 30 * 60;
 
 impl UrlQueue {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, QueueError> {

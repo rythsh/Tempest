@@ -44,17 +44,20 @@ use robots::{RobotsError, RobotsManager};
 use store::{DataStore, PageRecord, StoreError, build_record};
 
 const DEFAULT_USER_AGENT: &str = "ryth-tempest/0.1";
-const DEFAULT_CONCURRENCY: usize = 128;
+const DEFAULT_CONCURRENCY: usize = 16;
 const DEFAULT_SEEDS: &[&str] = &[
     "https://example.com/",
     "https://www.rust-lang.org/",
     "https://blog.rust-lang.org/",
-    "https://en.wikipedia.org/wiki/Rust_(programming_language)",
     "https://news.ycombinator.com/",
+    "https://lobste.rs/",
+    "https://dev.to/",
+    "https://medium.com/tag/programming",
+    "https://medium.com/tag/machine-learning",
 ];
-const DEFAULT_MIN_WORD_COUNT: usize = 0;
+const DEFAULT_MIN_WORD_COUNT: usize = 150;
 const DEFAULT_LANGUAGE_CONFIDENCE: f64 = 0.75;
-const DEFAULT_FILTER_ENGLISH: bool = false;
+const DEFAULT_FILTER_ENGLISH: bool = true;
 const DEFAULT_FOCUS_KEYWORDS: &[&str] = &[
     "code",
     "coding",
@@ -63,8 +66,17 @@ const DEFAULT_FOCUS_KEYWORDS: &[&str] = &[
     "sdk",
     "python",
     "rust",
+    "go",
+    "java",
+    "javascript",
+    "kubernetes",
+    "docker",
+    "database",
+    "postgresql",
+    "mysql",
+    "mongodb",
+    "redis",
     "security",
-    "malware",
     "vulnerability",
     "exploit",
     "threat",

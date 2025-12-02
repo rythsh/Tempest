@@ -67,6 +67,8 @@ impl Fetcher {
         loop {
             attempt += 1;
             let user_agent = self.pick_user_agent();
+            let jitter_ms: u64 = rand::random::<u8>() as u64 * 10;
+            sleep(Duration::from_millis(50 + jitter_ms)).await;
             let resp = self
                 .client
                 .get(url.clone())

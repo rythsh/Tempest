@@ -55,6 +55,14 @@ default_seeds:
   - https://commoncrawl.org/the-data/
   - https://opendata.ripe.net/
   - https://opendata.cloud.google.com/measurement-lab
+  - https://joelonsoftware.com/
+  - https://martinfowler.com/
+  - https://simonwillison.net/
+  - https://daringfireball.net/
+  - https://danluu.com/
+  - https://blog.cloudflare.com/
+  - https://devblogs.microsoft.com/
+  - https://dev.to/
 stats:
   enabled: true
   dataset_file: data/output.jsonl

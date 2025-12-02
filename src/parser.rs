@@ -14,7 +14,7 @@ pub struct ParsedPage {
 pub fn parse_html(document: &str, base_url: &Url) -> ParsedPage {
     let html = Html::parse_document(document);
     let title_sel = Selector::parse("title").unwrap();
-    let text_selectors = vec!["article", "h1", "h2", "h3", "h4", "p"];
+    let text_selectors = vec!["main", "article", "section", "div", "h1", "h2", "h3", "h4", "p", "li"];
     let link_sel = Selector::parse("a[href]").unwrap();
     let image_sel = Selector::parse("img[src]").unwrap();
     let pre_sel = Selector::parse("pre").unwrap();
@@ -60,9 +60,30 @@ pub fn parse_html(document: &str, base_url: &Url) -> ParsedPage {
     for el in html.select(&link_sel) {
         if let Some(href) = el.value().attr("href") {
             if let Ok(url) = base_url.join(href) {
-                if url.scheme().starts_with("http") {
-                    links.push(url);
+                if !url.scheme().starts_with("http") {
+                    continue;
                 }
+                if let Some(host) = url.host_str() {
+                    let host = host.to_lowercase();
+                    if host.ends_with("wikipedia.org") || host.ends_with("wikimedia.org") {
+                        if !url.path().starts_with("/wiki/Category:")
+                            && !url.path().starts_with("/wiki/Portal:")
+                            && !url.path().starts_with("/wiki/Template:")
+                        {
+                            continue;
+                        }
+                    }
+                    if host.contains("facebook.com")
+                        || host.contains("twitter.com")
+                        || host.contains("x.com")
+                        || host.contains("instagram.com")
+                        || host.contains("tiktok.com")
+                        || host.contains("linkedin.com")
+                    {
+                        continue;
+                    }
+                }
+                links.push(url);
             }
         }
     }
