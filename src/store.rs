@@ -30,6 +30,7 @@ pub struct PageRecord {
     pub final_url: String,
     pub title: Option<String>,
     pub content: String,
+    pub raw_html: String,
     pub content_length: usize,
     pub word_count: usize,
     pub status: u16,
@@ -38,6 +39,7 @@ pub struct PageRecord {
     pub code_snippets: Vec<String>,
     pub fetched_at: DateTime<Utc>,
     pub outbound_links: usize,
+    pub successful_crawl: bool,
 }
 
 #[derive(Clone)]
@@ -125,6 +127,7 @@ pub fn build_record(
     final_url: &Url,
     title: Option<String>,
     content: String,
+    raw_html: String,
     status: u16,
     content_type: Option<String>,
     fetched_at: DateTime<Utc>,
@@ -133,12 +136,14 @@ pub fn build_record(
     outbound_links: usize,
     matches_keywords: bool,
     code_snippets: Vec<String>,
+    successful_crawl: bool,
 ) -> PageRecord {
     PageRecord {
         requested_url: requested_url.to_string(),
         final_url: final_url.to_string(),
         title,
         content,
+        raw_html,
         content_length,
         word_count,
         status,
@@ -147,5 +152,6 @@ pub fn build_record(
         code_snippets,
         fetched_at,
         outbound_links,
+        successful_crawl,
     }
 }

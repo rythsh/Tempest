@@ -4,7 +4,6 @@ use dashmap::DashSet;
 use sled::{self, IVec};
 use thiserror::Error;
 use url::Url;
-use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Error)]
 pub enum QueueError {
@@ -25,8 +24,6 @@ pub struct UrlQueue {
     seen: sled::Tree,
     in_memory_seen: DashSet<String>,
 }
-
-const MIN_REVISIT_INTERVAL_SECS: u64 = 30 * 60;
 
 impl UrlQueue {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, QueueError> {
@@ -51,7 +48,7 @@ impl UrlQueue {
         })
     }
 
-     pub fn enqueue(&self, url: &Url) -> Result<bool, QueueError> {
+    pub fn enqueue(&self, url: &Url) -> Result<bool, QueueError> {
         if url.scheme() != "http" && url.scheme() != "https" {
             return Ok(false);
         }
@@ -60,7 +57,7 @@ impl UrlQueue {
             return Ok(false);
         }
 
-         let mut url_clone = url.clone();
+        let mut url_clone = url.clone();
         url_clone.set_fragment(None);
         let url_string = url_clone.as_str().to_string();
         if !self.in_memory_seen.insert(url_string.clone()) {

@@ -1016,6 +1016,8 @@ async fn handle_url(
     let body = String::from_utf8_lossy(&response.body).to_string();
     let content_length = response.body.len();
     let parsed = parse_html(&body, &final_url);
+    let raw_html = body.clone();
+
     if let Some(store) = image_store {
         for image_url in parsed.images.iter() {
             if let Err(err) = store.save_image(fetcher.as_ref(), image_url).await {
@@ -1077,6 +1079,7 @@ async fn handle_url(
         &final_url,
         parsed.title.clone(),
         cleaned,
+        raw_html,
         response.status.as_u16(),
         response.content_type.clone(),
         fetched_at,
@@ -1085,7 +1088,9 @@ async fn handle_url(
         parsed.links.len(),
         matches_keywords,
         parsed.code_snippets.clone(),
+        true,
     );
+
     let stored = store.write_record(&record).await?;
     stats.record_store(stored);
 

@@ -14,7 +14,9 @@ pub struct ParsedPage {
 pub fn parse_html(document: &str, base_url: &Url) -> ParsedPage {
     let html = Html::parse_document(document);
     let title_sel = Selector::parse("title").unwrap();
-    let text_selectors = vec!["main", "article", "section", "div", "h1", "h2", "h3", "h4", "p", "li"];
+    let text_selectors = vec![
+        "main", "article", "section", "div", "h1", "h2", "h3", "h4", "p", "li",
+    ];
     let link_sel = Selector::parse("a[href]").unwrap();
     let image_sel = Selector::parse("img[src]").unwrap();
     let pre_sel = Selector::parse("pre").unwrap();
