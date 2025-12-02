@@ -10,6 +10,7 @@ image_mime_whitelist:
   - image/jpg
   - image/gif
   - image/webp
+bypass_robots: false
 ai_preferences:
   min_word_count: 250
   filter_english: true

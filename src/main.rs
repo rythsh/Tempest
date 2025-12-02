@@ -30,7 +30,7 @@ use tokio::{
     sync::Mutex,
     time::{Duration, MissedTickBehavior},
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use url::Url;
 use whatlang::{Lang, detect};
@@ -81,6 +81,7 @@ const DEFAULT_REPORT_WORD_COUNT: bool = true;
 const DEFAULT_REPORT_DATASET_SIZE: bool = true;
 const DEFAULT_REPORT_RECORD_COUNT: bool = true;
 const DEFAULT_STATS_LANGUAGE_CONFIDENCE: f64 = 0.5;
+const DEFAULT_BYPASS_ROBOTS: bool = false;
 
 #[derive(thiserror::Error, Debug)]
 enum CrawlerError {
@@ -116,6 +117,8 @@ struct Config {
     default_seeds: Vec<String>,
     #[serde(default)]
     stats: StatsConfig,
+    #[serde(default = "default_bypass_robots")]
+    bypass_robots: bool,
 }
 
 impl Default for Config {
@@ -131,8 +134,13 @@ impl Default for Config {
             ai_preferences: AiPreferences::default(),
             default_seeds: default_seed_list(),
             stats: StatsConfig::default(),
+            bypass_robots: default_bypass_robots(),
         }
     }
+}
+
+fn default_bypass_robots() -> bool {
+    DEFAULT_BYPASS_ROBOTS
 }
 
 fn default_data_dir() -> PathBuf {
@@ -694,6 +702,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
         queue.clone(),
         stats.clone(),
     ));
+    if config.bypass_robots {
+        warn!(
+            "robots.txt checks disabled via config (bypass_robots=true); crawler will ignore site restrictions"
+        );
+    }
     info!(
         "starting crawl with {} urls in queue (concurrency={})",
         queue.len(),
@@ -712,6 +725,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             config.user_agent.clone(),
             image_store.clone(),
             ai_preferences.clone(),
+            config.bypass_robots,
         ) => {
             if let Err(err) = res {
                 error!("crawl error: {err}");
@@ -743,6 +757,7 @@ async fn crawl(
     user_agent: String,
     image_store: Option<Arc<ImageStore>>,
     ai_preferences: AiPreferences,
+    bypass_robots: bool,
 ) -> Result<(), CrawlerError> {
     let mut in_flight: FuturesUnordered<_> = FuturesUnordered::new();
 
@@ -758,6 +773,7 @@ async fn crawl(
                     let user_agent_clone = user_agent.clone();
                     let image_store_clone = image_store.clone();
                     let ai_preferences_clone = ai_preferences.clone();
+                    let bypass_robots_flag = bypass_robots;
                     in_flight.push(tokio::spawn(async move {
                         let links = handle_url(
                             url.clone(),
@@ -768,6 +784,7 @@ async fn crawl(
                             image_store_clone,
                             &user_agent_clone,
                             ai_preferences_clone,
+                            bypass_robots_flag,
                         )
                         .await;
                         (url, links, queue_clone, stats_clone)
@@ -836,8 +853,9 @@ async fn handle_url(
     image_store: Option<Arc<ImageStore>>,
     user_agent: &str,
     ai_preferences: AiPreferences,
+    bypass_robots: bool,
 ) -> Result<HandleOutcome, CrawlerError> {
-    if !robots.allows(fetcher.as_ref(), &url, user_agent).await? {
+    if !bypass_robots && !robots.allows(fetcher.as_ref(), &url, user_agent).await? {
         info!("robots disallow {}", url);
         return Ok(HandleOutcome {
             links: Vec::new(),
