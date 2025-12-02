@@ -6,7 +6,7 @@ the queue and output in `data/`.
 ## Clone
 
 ```sh
-git clone https://github.com/ryth-inc/Tempest.git
+git clone https://github.com/rythsh/Tempest.git
 cd tempest
 ```
 
